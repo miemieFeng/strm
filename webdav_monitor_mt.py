@@ -188,6 +188,19 @@ class WebdavMonitor:
         self.processed_count = 0
         self.dir_stats = {}  # 按目录统计下载和处理的文件
         self.stats_lock = threading.Lock()
+        
+        # 数据库操作队列和批处理
+        self.db_queue = queue.Queue()
+        self.db_batch_size = 50  # 批量处理大小
+        self.pending_files = []  # 待处理的文件路径列表
+        self.db_batch_lock = threading.Lock()
+        self.db_last_flush_time = time.time()
+        self.db_flush_interval = 30  # 30秒自动刷新一次
+        
+        # 启动数据库工作线程
+        self.db_worker_thread = threading.Thread(target=self._db_worker, daemon=True)
+        self.db_worker_thread.start()
+        logging.info("数据库工作线程已启动，批处理大小: %d, 自动刷新间隔: %d秒", self.db_batch_size, self.db_flush_interval)
     
     def _create_client_with_retry(self, max_retries=3):
         """创建WebDAV客户端并尝试连接，失败时重试"""
@@ -246,31 +259,11 @@ class WebdavMonitor:
         return processed_files
     
     def _save_processed_file(self, file_path):
-        """保存已处理文件记录到数据库"""
-        try:
-            conn = sqlite3.connect(self.file_tracker)
-            cursor = conn.cursor()
-            # 确保表存在
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS processed_files (
-                path TEXT PRIMARY KEY
-            )''')
-            
-            # 插入记录，忽略重复
-            cursor.execute("INSERT OR IGNORE INTO processed_files (path) VALUES (?)", (file_path,))
-            conn.commit()
-            conn.close()
-            
-            # 更新内存中的集合
-            self.processed_files.add(file_path)
-        except Exception as e:
-            logging.error(f"保存处理记录到数据库失败: {e}")
-            # 如果数据库操作失败，备用到文本文件
-            try:
-                with open(self.file_tracker + ".txt", 'a') as f:
-                    f.write(f"{file_path}\n")
-            except Exception as e2:
-                logging.error(f"保存处理记录到文本文件也失败: {e2}")
+        """将文件记录请求添加到队列"""
+        # 立即更新内存中的集合，不需要等待数据库操作
+        self.processed_files.add(file_path)
+        # 添加到数据库队列
+        self.db_queue.put({'type': 'save_file', 'file_path': file_path})
     
     def _load_last_scan_time(self):
         """加载上次扫描时间"""
@@ -675,7 +668,95 @@ class WebdavMonitor:
         """停止监控和下载"""
         logging.info("正在停止监控...")
         self.stop_flag.set()
+        
+        # 刷新剩余的待处理文件
+        self.db_queue.put({'type': 'flush'})
+        
+        # 等待数据库队列处理完成
+        logging.info("等待数据库操作完成...")
+        try:
+            self.db_queue.join()
+            self.db_worker_thread.join(timeout=30)
+        except:
+            pass
+            
         logging.info("监控器已停止")
+
+    def _db_worker(self):
+        """数据库工作线程，处理所有数据库写入操作，使用批处理提高效率"""
+        while not self.stop_flag.is_set() or not self.db_queue.empty():
+            try:
+                # 检查是否需要刷新批处理
+                current_time = time.time()
+                if current_time - self.db_last_flush_time > self.db_flush_interval:
+                    with self.db_batch_lock:
+                        if self.pending_files:
+                            self._db_flush_batch()
+                
+                # 从队列获取任务，短超时以便定期检查刷新
+                try:
+                    task = self.db_queue.get(timeout=2)
+                except queue.Empty:
+                    continue
+                
+                # 处理任务
+                try:
+                    if task['type'] == 'save_file':
+                        with self.db_batch_lock:
+                            self.pending_files.append(task['file_path'])
+                            # 如果达到批处理大小，立即刷新
+                            if len(self.pending_files) >= self.db_batch_size:
+                                self._db_flush_batch()
+                    elif task['type'] == 'flush':
+                        with self.db_batch_lock:
+                            self._db_flush_batch()
+                except Exception as e:
+                    logging.error(f"处理数据库任务出错: {e}")
+                
+                # 标记任务完成
+                self.db_queue.task_done()
+                
+            except Exception as e:
+                logging.error(f"数据库工作线程异常: {e}")
+                time.sleep(1)  # 出错后暂停一下
+    
+    def _db_flush_batch(self):
+        """将待处理的文件批量写入数据库"""
+        if not self.pending_files:
+            return
+        
+        current_batch = self.pending_files.copy()
+        self.pending_files = []
+        self.db_last_flush_time = time.time()
+        
+        # 批量写入数据库
+        try:
+            conn = sqlite3.connect(self.file_tracker, timeout=60)  # 增加超时时间
+            cursor = conn.cursor()
+            # 确保表存在
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS processed_files (
+                path TEXT PRIMARY KEY
+            )''')
+            
+            # 使用批量插入
+            cursor.executemany(
+                "INSERT OR IGNORE INTO processed_files (path) VALUES (?)", 
+                [(path,) for path in current_batch]
+            )
+            conn.commit()
+            conn.close()
+            
+            logging.info(f"已批量保存 {len(current_batch)} 个文件记录到数据库")
+        except Exception as e:
+            logging.error(f"批量保存记录到数据库失败: {e}")
+            # 备用文本文件存储
+            try:
+                with open(self.file_tracker + ".txt", 'a') as f:
+                    for path in current_batch:
+                        f.write(f"{path}\n")
+            except Exception as e2:
+                logging.error(f"批量保存记录到文本文件也失败: {e2}")
 
 def main():
     parser = argparse.ArgumentParser(description='多线程监控WebDAV服务器并下载文件')
