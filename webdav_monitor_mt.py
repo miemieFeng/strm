@@ -101,18 +101,21 @@ def process_strm_content(file_path, replace_ip_with_domain=None):
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
                 
-            logging.info(f"已处理STRM文件内容: {file_path}")
+            # 只记录文件所在目录，而不是完整路径
+            file_dir = os.path.dirname(file_path)
+            # 日志改为调试级别
+            logging.debug(f"已处理STRM文件: {os.path.basename(file_path)}")
             return True
         else:
-            logging.debug(f"STRM文件中未找到需要替换的IP: {file_path}")
+            logging.debug(f"STRM文件中未找到需要替换的IP: {os.path.basename(file_path)}")
             return False
             
     except Exception as e:
-        logging.error(f"处理STRM文件内容时出错: {file_path}, {e}")
+        logging.error(f"处理STRM文件内容时出错: {os.path.basename(file_path)}, {e}")
         return False
 
 class WebdavMonitor:
-    def __init__(self, webdav_url, username, password, local_dir, remote_dir='/', check_interval=300, max_workers=5, post_download_command=None, replace_ip=None):
+    def __init__(self, webdav_url, username, password, local_dir, remote_dir='/', check_interval=300, max_workers=5, post_download_command=None, replace_ip=None, pool_connections=20, pool_maxsize=30):
         """
         初始化WebDAV监控器
         
@@ -125,6 +128,8 @@ class WebdavMonitor:
         :param max_workers: 最大并行下载线程数
         :param post_download_command: 下载完成后执行的命令，可包含{local_path}占位符
         :param replace_ip: 下载后替换STRM文件中的IP为指定域名
+        :param pool_connections: 连接池初始连接数
+        :param pool_maxsize: 连接池最大连接数
         """
         self.local_dir = local_dir
         self.remote_dir = remote_dir
@@ -132,6 +137,8 @@ class WebdavMonitor:
         self.max_workers = max_workers
         self.post_download_command = post_download_command
         self.replace_ip = replace_ip
+        self.pool_connections = pool_connections
+        self.pool_maxsize = pool_maxsize
         
         # 确保本地目录存在
         if not os.path.exists(local_dir):
@@ -144,7 +151,9 @@ class WebdavMonitor:
             'webdav_password': password,
             'disable_check': True,
             'webdav_timeout': 30,  # 设置较长的超时时间
-            'verbose': logging.getLogger().level <= logging.DEBUG  # 根据日志级别自动设置WebDAV的verbose
+            'verbose': logging.getLogger().level <= logging.DEBUG,  # 根据日志级别自动设置WebDAV的verbose
+            'pool_connections': self.pool_connections,  # 连接池初始连接数
+            'pool_maxsize': self.pool_maxsize      # 连接池最大连接数
         }
         
         # 确保域名解析工作正常
@@ -177,6 +186,7 @@ class WebdavMonitor:
         self.download_count = 0
         self.error_count = 0
         self.processed_count = 0
+        self.dir_stats = {}  # 按目录统计下载和处理的文件
         self.stats_lock = threading.Lock()
     
     def _create_client_with_retry(self, max_retries=3):
@@ -321,28 +331,55 @@ class WebdavMonitor:
             
             # 下载文件
             success = False
-            try:
-                self.client.download_file(remote_path, local_path)
-                success = True
-            except Exception as e:
-                logging.error(f"下载文件时出错")
-                # 尝试使用编码后的路径
-                encoded_path = self._encode_path(remote_path)
-                if encoded_path != remote_path:
-                    try:
-                        self.client.download_file(encoded_path, local_path)
-                        success = True
-                    except Exception as e2:
-                        logging.error(f"使用编码路径下载文件时出错")
+            retry_count = 0
+            max_retries = 3
+            last_error = None
+            
+            while retry_count < max_retries and not success:
+                try:
+                    self.client.download_file(remote_path, local_path)
+                    success = True
+                except Exception as e:
+                    last_error = e
+                    retry_count += 1
+                    logging.error(f"下载文件时出错: {e}, 重试 ({retry_count}/{max_retries})")
+                    
+                    # 如果是连接池满的错误，等待较长时间后重试
+                    if "Connection pool is full" in str(e):
+                        logging.warning(f"连接池已满，等待后重试...")
+                        time.sleep(5)  # 等待更长时间
+                    else:
+                        time.sleep(1)
+                        
+                    # 如果达到最大重试次数，尝试使用编码后的路径
+                    if retry_count == max_retries and not success:
+                        encoded_path = self._encode_path(remote_path)
+                        if encoded_path != remote_path:
+                            try:
+                                logging.debug(f"尝试使用编码路径: {encoded_path}")
+                                self.client.download_file(encoded_path, local_path)
+                                success = True
+                            except Exception as e2:
+                                logging.error(f"使用编码路径下载文件时出错: {e2}")
             
             if success:
                 # 不记录单个文件的下载信息
                 # 添加到已处理文件列表
                 self._save_processed_file(remote_path)
                 
+                # 获取文件所在的远程目录
+                remote_dir = os.path.dirname(remote_path)
+                if not remote_dir:
+                    remote_dir = '/'
+                
                 # 更新下载统计
                 with self.stats_lock:
                     self.download_count += 1
+                    
+                    # 更新目录统计
+                    if remote_dir not in self.dir_stats:
+                        self.dir_stats[remote_dir] = {'downloads': 0, 'processed': 0}
+                    self.dir_stats[remote_dir]['downloads'] += 1
                 
                 # 处理STRM文件内容，替换IP为域名
                 if self.replace_ip and local_path.lower().endswith('.strm'):
@@ -350,6 +387,7 @@ class WebdavMonitor:
                     if processed:
                         with self.stats_lock:
                             self.processed_count += 1
+                            self.dir_stats[remote_dir]['processed'] += 1
                 
                 # 执行下载后命令
                 if self.post_download_command:
@@ -412,6 +450,7 @@ class WebdavMonitor:
         self.download_count = 0
         self.error_count = 0
         self.processed_count = 0
+        self.dir_stats = {}  # 重置目录统计
         
         # 创建线程池
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -420,6 +459,28 @@ class WebdavMonitor:
             
             # 等待所有下载任务完成
             executor.shutdown(wait=True)
+        
+        # 显示按目录分类的下载统计
+        if self.dir_stats:
+            # 按下载数量排序
+            sorted_dirs = sorted(self.dir_stats.items(), key=lambda x: x[1]['downloads'], reverse=True)
+            
+            # 只显示前10个目录的详细信息
+            top_dirs = sorted_dirs[:10]
+            remaining_dirs = sorted_dirs[10:]
+            
+            if len(sorted_dirs) > 1:  # 只有当多于一个目录时才显示目录统计
+                logging.info("按目录统计下载文件:")
+                for remote_dir, stats in top_dirs:
+                    # 获取目录的最后一级名称，更简洁
+                    dir_name = os.path.basename(remote_dir) or remote_dir
+                    logging.info(f"  - {dir_name}: 新增 {stats['downloads']} 个文件, 处理STRM {stats['processed']} 个")
+                
+                # 如果有更多目录，合并显示
+                if remaining_dirs:
+                    remaining_downloads = sum(stats['downloads'] for _, stats in remaining_dirs)
+                    remaining_processed = sum(stats['processed'] for _, stats in remaining_dirs)
+                    logging.info(f"  - 其他 {len(remaining_dirs)} 个目录: 新增 {remaining_downloads} 个文件, 处理STRM {remaining_processed} 个")
             
         return self.download_count, self.error_count, self.processed_count
     
@@ -509,6 +570,9 @@ class WebdavMonitor:
             return 0
             
         processed_count = 0
+        # 使用字典来跟踪每个目录中处理的文件数量
+        dir_stats = {}
+        
         try:
             logging.info(f"开始处理已下载的STRM文件内容...")
             
@@ -519,7 +583,21 @@ class WebdavMonitor:
                         file_path = os.path.join(root, file)
                         if process_strm_content(file_path, self.replace_ip):
                             processed_count += 1
+                            
+                            # 记录目录统计信息
+                            rel_dir = os.path.relpath(root, self.local_dir)
+                            if rel_dir == '.':
+                                rel_dir = '根目录'
+                            if rel_dir not in dir_stats:
+                                dir_stats[rel_dir] = 0
+                            dir_stats[rel_dir] += 1
             
+            # 按照处理的文件数量排序并显示每个目录的统计信息
+            if dir_stats:
+                logging.info(f"按目录统计处理的STRM文件:")
+                for dir_path, count in sorted(dir_stats.items(), key=lambda x: x[1], reverse=True):
+                    logging.info(f"  - {dir_path}: {count}个文件")
+                    
             logging.info(f"已处理 {processed_count} 个已下载的STRM文件内容")
             return processed_count
         except Exception as e:
@@ -530,6 +608,7 @@ class WebdavMonitor:
         """开始监控WebDAV服务器"""
         logging.info(f"开始监控WebDAV服务器的 {self.remote_dir} 目录，将检查新的文件 (间隔: {self.check_interval}秒)")
         logging.info(f"使用 {self.max_workers} 个线程进行并行下载")
+        logging.info(f"连接池配置：初始连接数 {self.pool_connections}，最大连接数 {self.pool_maxsize}")
         
         if self.replace_ip:
             logging.info(f"下载后将自动处理STRM文件内容，替换IP为: {self.replace_ip}")
@@ -539,9 +618,18 @@ class WebdavMonitor:
                 logging.info(f"已处理 {processed_count} 个已存在的STRM文件")
         
         try:
+            scan_count = 0
+            client_rebuild_interval = 5  # 每 5 次扫描重建一次客户端
+            
             while not self.stop_flag.is_set():
                 start_time = time.time()
-                logging.info(f"开始扫描...")
+                scan_count += 1
+                logging.info(f"开始扫描... (第 {scan_count} 次)")
+                
+                # 定期重建客户端以释放连接资源
+                if scan_count % client_rebuild_interval == 0:
+                    logging.info("定期重建WebDAV客户端以释放连接资源...")
+                    self.client = self._create_client_with_retry(max_retries=3)
                 
                 # 检查远程目录是否存在
                 try:
@@ -552,6 +640,10 @@ class WebdavMonitor:
                         continue
                 except Exception as e:
                     logging.error(f"检查远程目录 {self.remote_dir} 是否存在时出错: {e}")
+                    # 如果出现连接错误，尝试重建客户端
+                    if "Connection pool is full" in str(e):
+                        logging.warning("连接池已满，重建WebDAV客户端...")
+                        self.client = self._create_client_with_retry(max_retries=3)
                     time.sleep(self.check_interval)
                     continue
                 
@@ -597,6 +689,8 @@ def main():
     parser.add_argument('--post-command', help='下载完成后执行的命令，可使用{local_path}占位符')
     parser.add_argument('--replace-ip', help='替换STRM文件中的IP为指定域名，例如: hu.miemiejun.me')
     parser.add_argument('--verbose', action='store_true', help='显示详细日志')
+    parser.add_argument('--pool-connections', type=int, default=20, help='连接池初始连接数，默认20个')
+    parser.add_argument('--pool-maxsize', type=int, default=30, help='连接池最大连接数，默认30个')
     
     args = parser.parse_args()
     
@@ -613,7 +707,9 @@ def main():
         check_interval=args.interval,
         max_workers=args.threads,
         post_download_command=args.post_command,
-        replace_ip=args.replace_ip
+        replace_ip=args.replace_ip,
+        pool_connections=args.pool_connections,
+        pool_maxsize=args.pool_maxsize
     )
     
     try:
