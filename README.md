@@ -1,15 +1,93 @@
-# WebDAV 监控器
+# WebDAV监控工具
 
-这是一个用于监控 WebDAV 服务器上的 STRM 文件并下载它们的工具。支持多线程下载，并可以自动替换 STRM 文件中的 IP 地址为域名。
+这是一个多线程WebDAV监控工具，用于从WebDAV服务器下载文件。支持自动扫描和增量同步。
 
 ## 功能特点
 
-- 自动扫描并监控 WebDAV 服务器上的 STRM 文件
 - 多线程并行下载，提高效率
-- 自动处理 STRM 文件内容，替换 IP 地址为域名
-- Docker 容器化部署，方便维护
-- 可配置扫描间隔、线程数等参数
-- 安全处理敏感信息，支持环境变量传递
+- 增量同步，只下载新文件
+- 自动处理STRM文件内容，替换IP为域名
+- 支持下载后执行自定义命令
+- 自动重试和错误处理
+- 支持中文路径处理
+
+## Docker镜像使用方法
+
+### 从Docker Hub拉取镜像
+
+```bash
+docker pull yourusername/webdav-monitor:latest
+```
+
+### 运行容器
+
+```bash
+docker run -d \
+  --name webdav-monitor \
+  -v /path/to/local/downloads:/data \
+  -e WEBDAV_URL="https://your-webdav-server.com" \
+  -e WEBDAV_USERNAME="your_username" \
+  -e WEBDAV_PASSWORD="your_password" \
+  -e REMOTE_DIR="/your/remote/directory" \
+  -e CHECK_INTERVAL="600" \
+  -e THREADS="10" \
+  -e REPLACE_IP="your.domain.com" \
+  yourusername/webdav-monitor \
+  --url ${WEBDAV_URL} \
+  --username ${WEBDAV_USERNAME} \
+  --password ${WEBDAV_PASSWORD} \
+  --remote-dir ${REMOTE_DIR} \
+  --local-dir /data \
+  --interval ${CHECK_INTERVAL} \
+  --threads ${THREADS} \
+  --replace-ip ${REPLACE_IP}
+```
+
+### 环境变量
+
+可以使用以下环境变量配置容器：
+
+- `WEBDAV_URL`: WebDAV服务器地址
+- `WEBDAV_USERNAME`: WebDAV账号
+- `WEBDAV_PASSWORD`: WebDAV密码
+- `REMOTE_DIR`: 远程扫描目录，默认为`/links/影视`
+- `LOCAL_DIR`: 本地保存目录，默认为`/data`
+- `CHECK_INTERVAL`: 检查间隔(秒)，默认为600秒(10分钟)
+- `THREADS`: 下载线程数，默认为10个
+- `REPLACE_IP`: 替换STRM文件中的IP为指定域名
+- `POST_COMMAND`: 下载完成后执行的命令，可使用`{local_path}`占位符
+- `VERBOSE`: 是否显示详细日志，设置为`true`启用
+
+## 直接使用Python脚本
+
+如果不使用Docker，也可以直接运行Python脚本：
+
+```bash
+python webdav_monitor_mt.py \
+  --url https://your-webdav-server.com \
+  --username your_username \
+  --password your_password \
+  --remote-dir /your/remote/directory \
+  --local-dir ./downloads \
+  --interval 600 \
+  --threads 10 \
+  --replace-ip your.domain.com
+```
+
+## 参数说明
+
+```
+--url            WebDAV服务器地址 (必需)
+--username       WebDAV账号 (必需)
+--password       WebDAV密码 (必需)
+--local-dir      本地保存目录，默认为./downloads
+--remote-dir     远程扫描目录，默认为/links/影视
+--interval       检查间隔(秒)，默认600秒(10分钟)
+--threads        下载线程数，默认10个
+--post-command   下载完成后执行的命令，可使用{local_path}占位符
+--replace-ip     替换STRM文件中的IP为指定域名
+--verbose        显示详细日志
+```
 
 ## 安全说明
 
