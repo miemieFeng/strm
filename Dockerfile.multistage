@@ -1,0 +1,61 @@
+# 第一阶段：构建环境
+FROM python:3.9-alpine as builder
+
+# 安装构建依赖
+RUN apk add --no-cache \
+    gcc \
+    python3-dev \
+    musl-dev \
+    libxml2-dev \
+    libxslt-dev \
+    build-base \
+    libffi-dev \
+    openssl-dev
+
+# 创建工作目录
+WORKDIR /build
+
+# 安装依赖，只构建wheel包
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
+
+# 第二阶段：运行环境
+FROM python:3.9-alpine
+
+WORKDIR /app
+
+# 复制第一阶段构建的wheel包
+COPY --from=builder /wheels /wheels
+
+# 安装运行时依赖和网络工具
+RUN apk add --no-cache \
+    libxml2 \
+    libxslt \
+    curl \
+    iputils \
+    bind-tools && \
+    pip install --no-cache-dir --no-index --find-links=/wheels \
+    webdavclient3 urllib3 requests certifi lxml && \
+    rm -rf /wheels
+
+# 复制应用代码
+COPY webdav_monitor_mt.py .
+COPY entrypoint.sh .
+
+# 确保entrypoint.sh有执行权限
+RUN chmod +x entrypoint.sh
+
+# 创建下载目录
+RUN mkdir -p /data
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="localhost,127.0.0.1"
+ENV NO_PROXY="localhost,127.0.0.1"
+
+# 设置入口点
+ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"] 

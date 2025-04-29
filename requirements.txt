@@ -1,4 +1,6 @@
 webdavclient3==3.14.6
 urllib3<2.0.0,>=1.26.0
 requests>=2.25.0,<3.0.0
-certifi>=2021.10.8 
+certifi>=2021.10.8
+# 指定lxml版本以避免编译问题
+lxml==4.9.3 

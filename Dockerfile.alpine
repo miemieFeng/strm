@@ -12,11 +12,15 @@ RUN apk add --no-cache \
     build-base \
     curl \
     iputils \
-    bind-tools
+    bind-tools \
+    # 为lxml增加额外依赖
+    libffi-dev \
+    openssl-dev
 
-# 安装依赖
+# 安装依赖（使用预编译wheel）
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 增加pip编译参数和超时
+RUN pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.txt
 
 # 复制应用代码
 COPY webdav_monitor_mt.py .
