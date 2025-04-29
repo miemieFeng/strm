@@ -17,6 +17,7 @@ import re
 import socket
 import sys
 import ssl
+import sqlite3
 
 # 禁用所有潜在的代理配置
 if 'http_proxy' in os.environ:
@@ -160,8 +161,8 @@ class WebdavMonitor:
         # 创建客户端并测试连接
         self.client = self._create_client_with_retry(max_retries=3)
         
-        # 文件追踪器，记录已处理的文件
-        self.file_tracker = os.path.join(local_dir, '.file_tracker.txt')
+        # 使用SQLite数据库记录已处理的文件
+        self.file_tracker = os.path.join(local_dir, '.processed_files.db')
         self.processed_files = self._load_processed_files()
         
         # 上次扫描时间记录
@@ -204,16 +205,62 @@ class WebdavMonitor:
     
     def _load_processed_files(self):
         """加载已处理文件记录"""
+        processed_files = set()
         if os.path.exists(self.file_tracker):
-            with open(self.file_tracker, 'r') as f:
-                return set(line.strip() for line in f.readlines())
-        return set()
+            try:
+                # 使用数据库而不是文本文件来存储已处理文件
+                conn = sqlite3.connect(self.file_tracker)
+                cursor = conn.cursor()
+                # 确保表存在
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_files (
+                    path TEXT PRIMARY KEY
+                )''')
+                conn.commit()
+                
+                # 读取所有记录
+                cursor.execute("SELECT path FROM processed_files")
+                for row in cursor.fetchall():
+                    processed_files.add(row[0])
+                conn.close()
+                return processed_files
+            except Exception as e:
+                logging.warning(f"从数据库加载处理记录失败: {e}，尝试从文本文件加载")
+                # 如果数据库读取失败，尝试从旧格式的文本文件读取
+                try:
+                    with open(self.file_tracker, 'r') as f:
+                        return set(line.strip() for line in f.readlines())
+                except Exception as e2:
+                    logging.error(f"加载处理记录失败: {e2}")
+                    return set()
+        return processed_files
     
     def _save_processed_file(self, file_path):
-        """保存已处理文件记录"""
-        with open(self.file_tracker, 'a') as f:
-            f.write(f"{file_path}\n")
-        self.processed_files.add(file_path)
+        """保存已处理文件记录到数据库"""
+        try:
+            conn = sqlite3.connect(self.file_tracker)
+            cursor = conn.cursor()
+            # 确保表存在
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS processed_files (
+                path TEXT PRIMARY KEY
+            )''')
+            
+            # 插入记录，忽略重复
+            cursor.execute("INSERT OR IGNORE INTO processed_files (path) VALUES (?)", (file_path,))
+            conn.commit()
+            conn.close()
+            
+            # 更新内存中的集合
+            self.processed_files.add(file_path)
+        except Exception as e:
+            logging.error(f"保存处理记录到数据库失败: {e}")
+            # 如果数据库操作失败，备用到文本文件
+            try:
+                with open(self.file_tracker + ".txt", 'a') as f:
+                    f.write(f"{file_path}\n")
+            except Exception as e2:
+                logging.error(f"保存处理记录到文本文件也失败: {e2}")
     
     def _load_last_scan_time(self):
         """加载上次扫描时间"""
@@ -233,18 +280,9 @@ class WebdavMonitor:
         self.last_scan_time = current_time
     
     def _is_file_new(self, file_path):
-        """检查文件是否为新文件或已修改"""
-        try:
-            # 如果文件已经处理过，跳过
-            if file_path in self.processed_files:
-                return False
-            
-            # 否则视为新文件
-            return True
-        except Exception as e:
-            logging.error(f"检查文件 {file_path} 是否为新文件时出错: {e}")
-            # 如果无法确定，则假设为新文件
-            return True
+        """检查文件是否为新文件"""
+        # 使用哈希表查找效率高
+        return file_path not in self.processed_files
     
     def _encode_path(self, path):
         """编码路径，处理中文字符问题"""
@@ -392,7 +430,50 @@ class WebdavMonitor:
             
         try:
             try:
+                # 获取目录列表
                 files = self.client.list(directory)
+                # 直接批量处理目录中的文件
+                new_files = []
+                
+                # 收集所有文件和目录
+                directories = []
+                for file_name in files:
+                    # 跳过当前目录
+                    if file_name == directory or file_name == "./":
+                        continue
+                    
+                    # 构建完整路径
+                    file_path = fix_path(directory, file_name)
+                    
+                    try:
+                        is_dir = self.client.is_dir(file_path)
+                    except Exception as e:
+                        logging.warning(f"检查路径是否为目录时出错")
+                        # 尝试通过路径判断
+                        is_dir = file_path.endswith('/')
+                    
+                    if is_dir:
+                        # 收集目录待后续处理
+                        directories.append(file_path)
+                    else:
+                        # 收集所有可能需要下载的文件
+                        if self._is_file_new(file_path):
+                            new_files.append(file_path)
+                
+                # 批量提交文件下载任务
+                if new_files:
+                    logging.debug(f"目录 {directory} 中找到 {len(new_files)} 个新文件")
+                    for file_path in new_files:
+                        future = executor.submit(self._download_worker, file_path)
+                        futures.append(future)
+                
+                # 处理完所有文件后再递归处理子目录，减少并行递归深度
+                for dir_path in directories:
+                    try:
+                        self._find_strm_files(dir_path, executor, futures)
+                    except Exception as e:
+                        logging.warning(f"递归查找目录时出错")
+                
             except Exception as e:
                 logging.error(f"列出目录 {directory} 时出错: {e}")
                 # 尝试使用编码后的路径
@@ -406,36 +487,6 @@ class WebdavMonitor:
                         return futures
                 else:
                     return futures
-            
-            for file_name in files:
-                # 跳过当前目录
-                if file_name == directory or file_name == "./":
-                    continue
-                
-                # 构建完整路径
-                file_path = fix_path(directory, file_name)
-                    
-                try:
-                    is_dir = self.client.is_dir(file_path)
-                except Exception as e:
-                    logging.warning(f"检查路径是否为目录时出错")
-                    # 尝试通过路径判断
-                    is_dir = file_path.endswith('/')
-                
-                if is_dir:  # 如果是目录，递归查找
-                    try:
-                        self._find_strm_files(file_path, executor, futures)
-                    except Exception as e:
-                        logging.warning(f"递归查找目录时出错")
-                else:  # 处理所有文件，不仅是strm文件
-                    if self._is_file_new(file_path):
-                        # 不记录任何单个文件的信息
-                        # 提交到线程池下载
-                        future = executor.submit(self._download_worker, file_path)
-                        futures.append(future)
-                    else:
-                        # 不记录跳过的文件
-                        pass
             
             return futures
         except Exception as e:
