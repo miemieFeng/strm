@@ -328,4 +328,77 @@ WEBDAV_REMOTE_DIR=/your/remote/path
 
 ## 自动启动
 
-服务配置了`restart: unless-stopped`，会在Docker启动时自动重启。 
+服务配置了`restart: unless-stopped`，会在Docker启动时自动重启。
+
+## GitHub Actions 设置
+
+本项目使用GitHub Actions自动构建并推送Docker镜像到Docker Hub。如需使用此功能，请按照以下步骤设置：
+
+### 1. 设置GitHub密钥
+
+在GitHub仓库中添加以下密钥（Secrets）:
+
+1. 打开您的GitHub仓库
+2. 点击 "Settings" -> "Secrets and variables" -> "Actions"
+3. 点击 "New repository secret" 添加以下密钥：
+
+   - `DOCKERHUB_USERNAME`: 您的Docker Hub用户名
+   - `DOCKERHUB_TOKEN`: 您的Docker Hub访问令牌（不是密码）
+
+### 2. 获取Docker Hub访问令牌
+
+1. 登录您的Docker Hub账号
+2. 点击右上角您的用户名 -> "Account Settings" -> "Security"
+3. 在 "Access Tokens" 部分点击 "New Access Token"
+4. 给令牌起个名称（如"GitHub Actions"）并选择权限（至少需要"Read & Write"权限）
+5. 点击创建并复制生成的令牌
+
+### 3. 本地.env文件设置
+
+创建一个 `.env` 文件用于本地开发和测试：
+
+```bash
+# WebDAV服务器配置
+WEBDAV_URL=https://your-webdav-server.com
+WEBDAV_USERNAME=your_username
+WEBDAV_PASSWORD=your_password
+REMOTE_DIR=/links/影视
+
+# 本地配置
+LOCAL_DATA_PATH=./downloads
+
+# 性能设置
+CHECK_INTERVAL=600
+THREADS=10
+
+# 其他选项
+REPLACE_IP=your.domain.com
+VERBOSE=false
+# POST_COMMAND=
+
+# Docker Hub用户名（用于本地构建推送）
+DOCKERHUB_USERNAME=yourusername
+```
+
+### 4. 常见问题解决
+
+#### 构建时提示 "Username and password required"
+
+这表明GitHub Actions无法访问Docker Hub。请检查：
+
+1. 是否已正确设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` 密钥
+2. 令牌是否具有足够的权限（需要"Read & Write"权限）
+3. 令牌是否已过期（如已过期，请生成新令牌并更新密钥）
+
+#### 手动构建并推送镜像
+
+```bash
+# 登录Docker Hub
+docker login
+
+# 构建镜像
+docker build -t yourusername/webdav-monitor:latest .
+
+# 推送镜像
+docker push yourusername/webdav-monitor:latest
+``` 

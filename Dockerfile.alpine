@@ -1,16 +1,18 @@
-FROM python:3.9-slim
+FROM python:3.9-alpine
 
 WORKDIR /app
 
 # 安装必要的构建依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     gcc \
     python3-dev \
+    musl-dev \
     libxml2-dev \
-    libxslt1-dev \
-    build-essential \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    libxslt-dev \
+    build-base \
+    curl \
+    iputils \
+    bind-tools
 
 # 安装依赖
 COPY requirements.txt .
@@ -28,6 +30,12 @@ RUN mkdir -p /data
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV no_proxy="localhost,127.0.0.1"
+ENV NO_PROXY="localhost,127.0.0.1"
 
 # 设置入口点
-ENTRYPOINT ["/app/entrypoint.sh"] 
+ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"] 

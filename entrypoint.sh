@@ -14,18 +14,13 @@ set -e
 : ${VERBOSE:="false"}
 
 # 构建命令行参数
-ARGS=""
-ARGS="$ARGS --url $WEBDAV_URL"
-ARGS="$ARGS --username $WEBDAV_USERNAME"
-ARGS="$ARGS --password $WEBDAV_PASSWORD"
-ARGS="$ARGS --remote-dir $REMOTE_DIR"
-ARGS="$ARGS --local-dir $LOCAL_DIR"
-ARGS="$ARGS --interval $CHECK_INTERVAL"
-ARGS="$ARGS --threads $THREADS"
+ARGS="--url \"$WEBDAV_URL\" --username \"$WEBDAV_USERNAME\" --password \"$WEBDAV_PASSWORD\""
+ARGS="$ARGS --remote-dir \"$REMOTE_DIR\" --local-dir \"$LOCAL_DIR\""
+ARGS="$ARGS --interval \"$CHECK_INTERVAL\" --threads \"$THREADS\""
 
 # 添加可选参数
 if [ -n "$REPLACE_IP" ]; then
-  ARGS="$ARGS --replace-ip $REPLACE_IP"
+  ARGS="$ARGS --replace-ip \"$REPLACE_IP\""
 fi
 
 if [ -n "$POST_COMMAND" ]; then
@@ -46,4 +41,4 @@ echo "下载线程数: $THREADS"
 
 # 启动程序
 echo "执行命令: python webdav_monitor_mt.py $ARGS"
-exec python webdav_monitor_mt.py $ARGS 
+eval "python webdav_monitor_mt.py $ARGS" 
