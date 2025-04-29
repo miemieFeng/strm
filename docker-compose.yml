@@ -1,0 +1,49 @@
+version: '3'
+
+services:
+  webdav-monitor:
+    image: fengmiemie/webdav-monitor:multiarch
+    container_name: webdav-monitor
+    restart: unless-stopped
+    network_mode: "host"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    environment:
+      - WEBDAV_URL=${WEBDAV_URL:-http://hu.miemiejun.me:5005}
+      - WEBDAV_USERNAME=${WEBDAV_USERNAME:-19965027242}
+      - WEBDAV_PASSWORD=${WEBDAV_PASSWORD:-zhao131496}
+      - WEBDAV_REMOTE_DIR=${WEBDAV_REMOTE_DIR:-/links/影视}
+      - LOCAL_DIR=/data
+      - THREADS=10
+      - CHECK_INTERVAL=600
+      - REPLACE_IP=hu.miemiejun.me
+      - VERBOSE=true
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - no_proxy=hu.miemiejun.me,localhost,127.0.0.1
+      - NO_PROXY=hu.miemiejun.me,localhost,127.0.0.1
+    volumes:
+      - ./downloads:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    entrypoint: >
+      sh -c "apk add --no-cache curl iputils bind-tools &&
+             echo '=== 系统信息 ===' &&
+             cat /etc/resolv.conf &&
+             echo '=== 环境变量 ===' &&
+             env | grep -E 'proxy|PROXY' &&
+             echo '=== 网络诊断 ===' &&
+             ping -c 3 -4 hu.miemiejun.me || echo '无法通过IPv4 ping通服务器' &&
+             ping -c 3 -6 hu.miemiejun.me || echo '无法通过IPv6 ping通服务器' &&
+             nslookup hu.miemiejun.me || echo '无法解析域名' &&
+             curl -v --connect-timeout 10 http://hu.miemiejun.me:5005 || echo '无法连接WebDAV服务' &&
+             echo '=== 禁用潜在代理 ===' &&
+             export http_proxy='' https_proxy='' HTTP_PROXY='' HTTPS_PROXY='' &&
+             echo '=== 启动主程序 ===' &&
+             exec /bin/sh /app/entrypoint.sh" 
