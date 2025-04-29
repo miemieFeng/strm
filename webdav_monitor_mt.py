@@ -403,7 +403,7 @@ class WebdavMonitor:
             return self._download_file(remote_path)
         return False
     
-    def _find_and_download_strm_files(self, directory=None):
+    def _find_and_download_files(self, directory=None):
         """递归查找所有文件并立即添加到下载线程池"""
         if directory is None:
             directory = self.remote_dir
@@ -416,14 +416,14 @@ class WebdavMonitor:
         # 创建线程池
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # 开始查找和下载过程
-            self._find_strm_files(directory, executor, futures=None, depth=0)
+            self._find_files(directory, executor, futures=None, depth=0)
             
             # 等待所有下载任务完成
             executor.shutdown(wait=True)
             
         return self.download_count, self.error_count, self.processed_count
     
-    def _find_strm_files(self, directory, executor, futures=None, depth=0):
+    def _find_files(self, directory, executor, futures=None, depth=0):
         """递归查找文件并提交到线程池下载"""
         if futures is None:
             futures = []
@@ -477,7 +477,7 @@ class WebdavMonitor:
                 # 处理完所有文件后再递归处理子目录，减少并行递归深度
                 for dir_path in directories:
                     try:
-                        self._find_strm_files(dir_path, executor, futures, depth + 1)
+                        self._find_files(dir_path, executor, futures, depth + 1)
                     except Exception as e:
                         logging.warning(f"递归查找目录时出错")
 
@@ -556,7 +556,7 @@ class WebdavMonitor:
                     continue
                 
                 # 查找所有文件并立即下载
-                download_count, error_count, processed_count = self._find_and_download_strm_files()
+                download_count, error_count, processed_count = self._find_and_download_files()
                 
                 # 更新上次扫描时间
                 self._save_last_scan_time()
