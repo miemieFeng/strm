@@ -104,7 +104,7 @@ def process_strm_content(file_path, replace_ip_with_domain=None):
             # 只记录文件所在目录，而不是完整路径
             file_dir = os.path.dirname(file_path)
             # 日志改为调试级别
-            logging.debug(f"已处理STRM文件: {os.path.basename(file_path)}")
+            # logging.debug(f"已处理STRM文件: {os.path.basename(file_path)}")
             return True
         else:
             logging.debug(f"STRM文件中未找到需要替换的IP: {os.path.basename(file_path)}")
