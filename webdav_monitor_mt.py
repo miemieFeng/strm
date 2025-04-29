@@ -416,14 +416,14 @@ class WebdavMonitor:
         # 创建线程池
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # 开始查找和下载过程
-            self._find_strm_files(directory, executor)
+            self._find_strm_files(directory, executor, futures=None, depth=0)
             
             # 等待所有下载任务完成
             executor.shutdown(wait=True)
             
         return self.download_count, self.error_count, self.processed_count
     
-    def _find_strm_files(self, directory, executor, futures=None):
+    def _find_strm_files(self, directory, executor, futures=None, depth=0):
         """递归查找文件并提交到线程池下载"""
         if futures is None:
             futures = []
@@ -434,6 +434,11 @@ class WebdavMonitor:
                 files = self.client.list(directory)
                 # 直接批量处理目录中的文件
                 new_files = []
+                
+                # 创建缩进，显示目录层级
+                indent = "  " * depth
+                # 在非debug模式下也显示当前处理的文件夹
+                logging.info(f"{indent}▶ 开始扫描: {directory}")
                 
                 # 收集所有文件和目录
                 directories = []
@@ -462,17 +467,22 @@ class WebdavMonitor:
                 
                 # 批量提交文件下载任务
                 if new_files:
-                    logging.debug(f"目录 {directory} 中找到 {len(new_files)} 个新文件")
+                    logging.info(f"{indent}  ✓ 发现: {len(new_files)} 个新文件")
                     for file_path in new_files:
                         future = executor.submit(self._download_worker, file_path)
                         futures.append(future)
+                else:
+                    logging.info(f"{indent}  ✓ 目录为空或无新文件")
                 
                 # 处理完所有文件后再递归处理子目录，减少并行递归深度
                 for dir_path in directories:
                     try:
-                        self._find_strm_files(dir_path, executor, futures)
+                        self._find_strm_files(dir_path, executor, futures, depth + 1)
                     except Exception as e:
                         logging.warning(f"递归查找目录时出错")
+
+                # 在目录处理完成后添加日志
+                logging.info(f"{indent}◀ 完成扫描: {directory}")
                 
             except Exception as e:
                 logging.error(f"列出目录 {directory} 时出错: {e}")

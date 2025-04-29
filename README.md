@@ -16,7 +16,7 @@
 ### 从Docker Hub拉取镜像
 
 ```bash
-docker pull yourusername/webdav-monitor:latest
+docker pull miemiefeng/webdav-monitor:latest
 ```
 
 ### 运行容器
@@ -32,7 +32,7 @@ docker run -d \
   -e CHECK_INTERVAL="600" \
   -e THREADS="10" \
   -e REPLACE_IP="your.domain.com" \
-  yourusername/webdav-monitor \
+  miemiefeng/webdav-monitor \
   --url ${WEBDAV_URL} \
   --username ${WEBDAV_USERNAME} \
   --password ${WEBDAV_PASSWORD} \
@@ -377,7 +377,7 @@ VERBOSE=false
 # POST_COMMAND=
 
 # Docker Hub用户名（用于本地构建推送）
-DOCKERHUB_USERNAME=yourusername
+DOCKERHUB_USERNAME=miemiefeng
 ```
 
 ### 4. 常见问题解决
@@ -397,8 +397,8 @@ DOCKERHUB_USERNAME=yourusername
 docker login
 
 # 构建镜像
-docker build -t yourusername/webdav-monitor:latest .
+docker build -t miemiefeng/webdav-monitor:latest .
 
 # 推送镜像
-docker push yourusername/webdav-monitor:latest
+docker push miemiefeng/webdav-monitor:latest
 ``` 
