@@ -17,7 +17,9 @@ WORKDIR /build
 
 # 安装依赖，只构建wheel包
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
+# 添加Web界面依赖
+RUN pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt \
+    && pip wheel --no-cache-dir --wheel-dir=/wheels flask
 
 # 第二阶段：运行环境
 FROM python:3.9-alpine
@@ -35,18 +37,21 @@ RUN apk add --no-cache \
     iputils \
     bind-tools && \
     pip install --no-cache-dir --no-index --find-links=/wheels \
-    webdavclient3 urllib3 requests certifi lxml && \
+    webdavclient3 urllib3 requests certifi lxml flask && \
     rm -rf /wheels
 
 # 复制应用代码
 COPY webdav_monitor_mt.py .
+COPY webdav_monitor_web.py .
 COPY entrypoint.sh .
+# 复制web模板
+COPY templates/ ./templates/
 
 # 确保entrypoint.sh有执行权限
 RUN chmod +x entrypoint.sh
 
-# 创建下载目录
-RUN mkdir -p /data
+# 创建下载目录和配置目录
+RUN mkdir -p /data /config
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
@@ -56,6 +61,9 @@ ENV http_proxy=""
 ENV https_proxy=""
 ENV no_proxy="localhost,127.0.0.1"
 ENV NO_PROXY="localhost,127.0.0.1"
+# 添加Web模式环境变量
+ENV WEB_MODE="false"
+ENV WEB_PORT="8080"
 
 # 设置入口点
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"] 

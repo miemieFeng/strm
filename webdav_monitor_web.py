@@ -6,6 +6,7 @@ import json
 import threading
 import time
 import logging
+import argparse
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import webdav_monitor_mt as monitor
@@ -61,7 +62,7 @@ logging.getLogger().addHandler(log_handler)
 
 def load_config():
     """加载配置文件"""
-    global config
+    global config, config_file
     try:
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
@@ -231,8 +232,22 @@ def api_restart():
 
 def main():
     """主函数"""
+    global config_file
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="WebDAV监控Web界面")
+    parser.add_argument("--config-dir", default=".", help="配置文件目录路径")
+    parser.add_argument("--port", type=int, default=8080, help="Web服务监听端口")
+    args = parser.parse_args()
+    
+    # 设置配置文件路径
+    config_file = os.path.join(args.config_dir, "webdav_config.json")
+    
     # 加载配置
     load_config()
+    
+    # 更新Web端口
+    config["web_port"] = args.port
     
     # 自动启动监控
     if config["webdav_url"] and config["username"] and config["password"]:

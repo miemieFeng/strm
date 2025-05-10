@@ -1,6 +1,6 @@
 # WebDAV监控工具
 
-这是一个多线程WebDAV监控工具，用于从WebDAV服务器下载文件。支持自动扫描和增量同步。
+这是一个多线程WebDAV监控工具，用于从WebDAV服务器下载文件。支持自动扫描和增量同步。提供命令行和Web管理界面两种使用方式。
 
 ## 功能特点
 
@@ -10,6 +10,7 @@
 - 支持下载后执行自定义命令
 - 自动重试和错误处理
 - 支持中文路径处理
+- **新增Web管理界面**，方便配置和监控
 
 ## Docker镜像使用方法
 
@@ -19,7 +20,9 @@
 docker pull miemiefeng/webdav-monitor:latest
 ```
 
-### 运行容器
+### 运行方式
+
+#### 1. 命令行模式 (CLI Mode)
 
 ```bash
 docker run -d \
@@ -32,20 +35,27 @@ docker run -d \
   -e CHECK_INTERVAL="600" \
   -e THREADS="10" \
   -e REPLACE_IP="your.domain.com" \
-  miemiefeng/webdav-monitor \
-  --url ${WEBDAV_URL} \
-  --username ${WEBDAV_USERNAME} \
-  --password ${WEBDAV_PASSWORD} \
-  --remote-dir ${REMOTE_DIR} \
-  --local-dir /data \
-  --interval ${CHECK_INTERVAL} \
-  --threads ${THREADS} \
-  --replace-ip ${REPLACE_IP}
+  miemiefeng/webdav-monitor
 ```
+
+#### 2. Web管理界面模式 (Web UI Mode)
+
+```bash
+docker run -d \
+  --name webdav-monitor-web \
+  -p 8080:8080 \
+  -v /path/to/local/downloads:/data \
+  -v /path/to/config:/config \
+  -e WEB_MODE=true \
+  -e WEB_PORT=8080 \
+  miemiefeng/webdav-monitor
+```
+
+访问 `http://your-server-ip:8080` 进入Web管理界面
 
 ### 环境变量
 
-可以使用以下环境变量配置容器：
+#### 命令行模式变量
 
 - `WEBDAV_URL`: WebDAV服务器地址
 - `WEBDAV_USERNAME`: WebDAV账号
@@ -58,9 +68,14 @@ docker run -d \
 - `POST_COMMAND`: 下载完成后执行的命令，可使用`{local_path}`占位符
 - `VERBOSE`: 是否显示详细日志，设置为`true`启用
 
+#### Web界面模式变量
+
+- `WEB_MODE`: 设置为`true`启用Web界面模式
+- `WEB_PORT`: Web界面监听端口，默认为8080
+
 ## 直接使用Python脚本
 
-如果不使用Docker，也可以直接运行Python脚本：
+### 命令行模式
 
 ```bash
 python webdav_monitor_mt.py \
@@ -74,7 +89,17 @@ python webdav_monitor_mt.py \
   --replace-ip your.domain.com
 ```
 
+### Web界面模式
+
+```bash
+python webdav_monitor_web.py \
+  --config-dir /path/to/config \
+  --port 8080
+```
+
 ## 参数说明
+
+### 命令行模式参数
 
 ```
 --url            WebDAV服务器地址 (必需)
@@ -88,6 +113,68 @@ python webdav_monitor_mt.py \
 --replace-ip     替换STRM文件中的IP为指定域名
 --verbose        显示详细日志
 ```
+
+### Web界面模式参数
+
+```
+--config-dir     配置文件目录，默认为当前目录
+--port           Web服务端口，默认为8080
+```
+
+## 使用Docker Compose
+
+使用Docker Compose可以更方便地管理容器。我们提供了两种模式的配置:
+
+### 命令行模式
+
+```yaml
+version: '3'
+services:
+  webdav-monitor:
+    image: miemiefeng/webdav-monitor:latest
+    container_name: webdav-monitor
+    restart: unless-stopped
+    environment:
+      - WEBDAV_URL=https://your-webdav-server.com
+      - WEBDAV_USERNAME=your_username
+      - WEBDAV_PASSWORD=your_password
+      - REMOTE_DIR=/your/remote/dir
+      - LOCAL_DIR=/data
+      - CHECK_INTERVAL=600
+      - THREADS=10
+      - WEB_MODE=false
+    volumes:
+      - ./downloads:/data
+```
+
+### Web界面模式
+
+```yaml
+version: '3'
+services:
+  webdav-monitor-web:
+    image: miemiefeng/webdav-monitor:latest
+    container_name: webdav-monitor-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - WEB_MODE=true
+      - WEB_PORT=8080
+    volumes:
+      - ./downloads:/data
+      - ./config:/config
+```
+
+## Web界面功能
+
+Web管理界面提供以下功能:
+
+- 监控状态查看：运行状态、下载文件数、处理STRM数等
+- 实时日志查看
+- 配置管理：修改WebDAV连接信息和工作参数
+- 操作控制：启动、停止、重启监控
+- 最近下载文件列表
 
 ## 安全说明
 
@@ -115,7 +202,7 @@ docker-compose up -d
 
 ## 快速开始
 
-### 使用 Docker Compose
+### 命令行模式
 
 1. 克隆此仓库
 
@@ -129,55 +216,31 @@ cd <repository-dir>
 3. 启动容器
 
 ```bash
-docker-compose up -d
+docker-compose up -d webdav-monitor
 ```
 
-4. 查看日志
+### Web界面模式
+
+1. 克隆此仓库
 
 ```bash
-docker-compose logs -f
+git clone <repository-url>
+cd <repository-dir>
 ```
 
-### 手动构建并运行 Docker 镜像
-
-1. 构建 Docker 镜像
+2. 创建配置和下载目录
 
 ```bash
-docker build -t webdav-monitor .
+mkdir -p downloads config
 ```
 
-2. 运行容器
+3. 启动容器
 
 ```bash
-docker run -d \
-  --name webdav-monitor \
-  -e WEBDAV_URL=http://your-webdav-server.com \
-  -e WEBDAV_USERNAME=your_username \
-  -e WEBDAV_PASSWORD=your_password \
-  -e WEBDAV_REMOTE_DIR=/your/remote/dir \
-  -e REPLACE_IP=your.domain.name \
-  -v $(pwd)/downloads:/data \
-  webdav-monitor
+docker-compose up -d webdav-monitor-web
 ```
 
-## 环境变量说明
-
-| 环境变量 | 描述 | 默认值 |
-|----------|------|--------|
-| WEBDAV_URL | WebDAV 服务器地址 | - |
-| WEBDAV_USERNAME | WebDAV 用户名 | - |
-| WEBDAV_PASSWORD | WebDAV 密码 | - |
-| WEBDAV_REMOTE_DIR | 远程扫描目录 | /links/影视 |
-| LOCAL_DIR | 本地下载目录 | /data |
-| THREADS | 下载线程数 | 10 |
-| CHECK_INTERVAL | 检查间隔(秒) | 600 |
-| REPLACE_IP | 替换 STRM 文件中的 IP 为此域名 | your.domain.name |
-| VERBOSE | 是否显示详细日志 | true |
-| POST_COMMAND | 下载完成后执行的命令，可使用 {local_path} 占位符 | - |
-
-## 卷挂载
-
-- `./downloads:/data`: 下载的文件将存储在此目录中
+4. 访问Web界面 `http://your-server-ip:8080` 进行配置
 
 ## 日志
 
@@ -195,66 +258,36 @@ docker-compose exec webdav-monitor cat /app/webdav_monitor.log
 
 ## 安装依赖
 
+如果不使用Docker，直接使用Python脚本：
+
 ```bash
 pip install -r requirements.txt
 ```
 
-## 使用方法
+## Web界面模式的配置文件
 
-### 命令行运行
+Web界面模式下，配置文件默认存储在配置目录中的 `webdav_config.json`，格式如下：
 
-```bash
-python webdav_monitor.py --url "https://your-webdav-server.com" --username "your_username" --password "your_password" --remote-dir "/links" --local-dir "./downloads" --interval 300
+```json
+{
+  "webdav_url": "https://your-webdav-server.com",
+  "username": "your_username",
+  "password": "your_password",
+  "local_dir": "/data",
+  "remote_dir": "/your/remote/dir",
+  "check_interval": 600,
+  "max_workers": 10,
+  "replace_ip": "your.domain.com",
+  "post_command": "",
+  "web_port": 8080
+}
 ```
 
-### 仅列出文件模式
+在Docker中，通过挂载配置目录保持配置持久化：
 
-```bash
-python webdav_monitor.py --url "https://your-webdav-server.com" --username "your_username" --password "your_password" --remote-dir "/links" --list-only
 ```
-
-### 参数说明
-
-- `--url`: WebDAV服务器地址（必需）
-- `--username`: WebDAV账号（必需）
-- `--password`: WebDAV密码（必需）
-- `--remote-dir`: 远程扫描目录，默认为根目录(`/`)
-- `--local-dir`: 本地保存目录，默认为`./downloads`
-- `--interval`: 检查间隔(秒)，默认300秒(5分钟)
-- `--list-only`: 仅列出文件，不下载
-
-## Docker支持
-
-### 使用docker-compose启动
-
-1. 修改`docker-compose.yml`文件中的环境变量
-2. 运行以下命令启动容器：
-
-```bash
-docker-compose up -d
+-v /path/to/config:/config
 ```
-
-### 或者使用docker命令启动：
-
-```bash
-docker build -t webdav-monitor .
-
-docker run -d \
-  --name webdav-monitor \
-  -e WEBDAV_URL="http://your-webdav-server.com" \
-  -e WEBDAV_USERNAME="your_username" \
-  -e WEBDAV_PASSWORD="your_password" \
-  -e REMOTE_DIR="/links" \
-  -e LOCAL_DIR="/app/downloads" \
-  -e CHECK_INTERVAL=300 \
-  -v ./downloads:/app/downloads \
-  -v ./config:/app/config \
-  webdav-monitor
-```
-
-## 日志
-
-日志会同时输出到控制台和`webdav_monitor.log`文件中。
 
 ## 已知问题
 
@@ -332,7 +365,7 @@ WEBDAV_REMOTE_DIR=/your/remote/path
 
 ## GitHub Actions 设置
 
-本项目使用GitHub Actions自动构建并推送Docker镜像到Docker Hub。如需使用此功能，请按照以下步骤设置：
+本项目使用GitHub Actions自动构建并推送Docker镜像到Docker Hub。这个镜像包含了命令行模式和Web界面模式的所有功能。如需使用此功能，请按照以下步骤设置：
 
 ### 1. 设置GitHub密钥
 
@@ -353,36 +386,38 @@ WEBDAV_REMOTE_DIR=/your/remote/path
 4. 给令牌起个名称（如"GitHub Actions"）并选择权限（至少需要"Read & Write"权限）
 5. 点击创建并复制生成的令牌
 
-### 3. 本地.env文件设置
+### 3. 自动构建触发条件
 
-创建一个 `.env` 文件用于本地开发和测试：
+镜像自动构建在以下情况下触发：
+- 推送代码到`main`分支
+- 创建以`v`开头的版本标签（例如：v1.0.0）
+- 创建Pull Request到`main`分支（此情况下只会构建不会推送）
 
+构建的镜像支持以下平台：
+- linux/amd64（x86_64架构）
+- linux/arm64（ARM 64位架构，如树莓派4）
+
+### 4. 使用自动构建的镜像
+
+自动构建的镜像会被推送到Docker Hub，并根据不同情况标记不同的标签：
+- `latest`: 最新的`main`分支构建
+- `vX.Y.Z`: 特定版本的构建（如v1.0.0）
+- `vX.Y`: 主要版本的构建（如v1.0）
+- 分支名称和短SHA值的标签
+
+您可以通过以下命令拉取最新镜像：
 ```bash
-# WebDAV服务器配置
-WEBDAV_URL=https://your-webdav-server.com
-WEBDAV_USERNAME=your_username
-WEBDAV_PASSWORD=your_password
-REMOTE_DIR=/links/影视
-
-# 本地配置
-LOCAL_DATA_PATH=./downloads
-
-# 性能设置
-CHECK_INTERVAL=600
-THREADS=10
-
-# 其他选项
-REPLACE_IP=your.domain.com
-VERBOSE=false
-# POST_COMMAND=
-
-# Docker Hub用户名（用于本地构建推送）
-DOCKERHUB_USERNAME=miemiefeng
+docker pull miemiefeng/webdav-monitor:latest
 ```
 
-### 4. 常见问题解决
+或者拉取特定版本：
+```bash
+docker pull miemiefeng/webdav-monitor:v1.0.0
+```
 
-#### 构建时提示 "Username and password required"
+### 5. 常见问题解决
+
+#### 构建失败："Username and password required"
 
 这表明GitHub Actions无法访问Docker Hub。请检查：
 
@@ -392,12 +427,14 @@ DOCKERHUB_USERNAME=miemiefeng
 
 #### 手动构建并推送镜像
 
+如需手动构建并推送镜像，可以使用以下命令：
+
 ```bash
 # 登录Docker Hub
 docker login
 
 # 构建镜像
-docker build -t miemiefeng/webdav-monitor:latest .
+docker build -t miemiefeng/webdav-monitor:latest -f Dockerfile.multistage .
 
 # 推送镜像
 docker push miemiefeng/webdav-monitor:latest

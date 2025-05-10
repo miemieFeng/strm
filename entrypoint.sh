@@ -1,6 +1,27 @@
 #!/bin/sh
 set -e
 
+# 检查是否使用Web界面模式
+if [ "$WEB_MODE" = "true" ]; then
+    echo "启动WebDAV监控Web界面模式..."
+    
+    # 确保配置目录存在
+    mkdir -p /config
+    
+    # 如果配置文件不存在，则创建默认配置
+    if [ ! -f "/config/webdav_config.json" ]; then
+        echo '{"webdav_url": "", "username": "", "password": "", "local_dir": "/data", "remote_dir": "/", "check_interval": 600, "max_workers": 10, "replace_ip": "", "post_command": "", "web_port": 8080}' > /config/webdav_config.json
+        echo "已创建默认配置文件"
+    fi
+    
+    # 启动Web服务
+    echo "启动Web服务在端口: ${WEB_PORT}"
+    cd /app && python webdav_monitor_web.py --config-dir /config --port ${WEB_PORT}
+    exit 0
+fi
+
+# 以下是原来的命令行模式
+
 # 设置默认值
 : ${WEBDAV_URL:?"请设置WEBDAV_URL环境变量"}
 : ${WEBDAV_USERNAME:?"请设置WEBDAV_USERNAME环境变量"}

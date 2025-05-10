@@ -1,6 +1,7 @@
 version: '3'
 
 services:
+  # CLI模式 - 旧版本兼容
   webdav-monitor:
     image: ${DOCKERHUB_USERNAME:-miemiefeng}/webdav-monitor:latest
     container_name: webdav-monitor
@@ -26,8 +27,35 @@ services:
       - https_proxy=
       - no_proxy=localhost,127.0.0.1
       - NO_PROXY=localhost,127.0.0.1
+      # CLI模式
+      - WEB_MODE=false
     volumes:
       - ${LOCAL_DATA_PATH:-./downloads}:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  
+  # Web界面模式
+  webdav-monitor-web:
+    image: ${DOCKERHUB_USERNAME:-miemiefeng}/webdav-monitor:latest
+    container_name: webdav-monitor-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      - WEB_MODE=true
+      - WEB_PORT=8080
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - no_proxy=localhost,127.0.0.1
+      - NO_PROXY=localhost,127.0.0.1
+    volumes:
+      - ${LOCAL_DATA_PATH:-./downloads}:/data
+      - ${CONFIG_PATH:-./config}:/config
     logging:
       driver: "json-file"
       options:
