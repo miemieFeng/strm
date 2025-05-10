@@ -40,6 +40,12 @@ config = {
     "web_port": 8080
 }
 
+# 从环境变量获取日志级别
+if 'LOG_LEVEL' in os.environ:
+    log_level_name = os.environ.get('LOG_LEVEL', 'INFO')
+    log_level = getattr(logging, log_level_name.upper(), logging.INFO)
+    logging.getLogger().setLevel(log_level)
+
 # 日志记录
 log_entries = []
 MAX_LOG_ENTRIES = 100
@@ -96,6 +102,11 @@ def start_monitor():
     
     if monitor_thread and monitor_thread.is_alive():
         logging.warning("监控已经在运行")
+        return False
+    
+    # 检查是否有完整的WebDAV配置
+    if not config["webdav_url"] or not config["username"] or not config["password"]:
+        logging.warning("WebDAV配置不完整，无法启动监控")
         return False
     
     try:
@@ -249,11 +260,18 @@ def main():
     # 更新Web端口
     config["web_port"] = args.port
     
-    # 自动启动监控
+    # 自动启动监控，但只有在配置完整时
     if config["webdav_url"] and config["username"] and config["password"]:
-        start_monitor()
+        success = start_monitor()
+        if success:
+            logging.info("WebDAV监控已自动启动")
+        else:
+            logging.warning("WebDAV监控自动启动失败，请手动配置并启动")
+    else:
+        logging.info("WebDAV配置不完整，但继续启动Web界面。请在Web界面完成配置后启动监控")
     
     # 启动Web服务
+    logging.info(f"Web服务启动在端口: {config['web_port']}")
     app.run(host='0.0.0.0', port=config["web_port"], debug=False)
 
 if __name__ == "__main__":

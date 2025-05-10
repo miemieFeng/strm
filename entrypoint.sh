@@ -5,66 +5,43 @@ set -e
 : ${LOG_LEVEL:="INFO"}
 export LOG_LEVEL
 
-# 检查是否使用Web界面模式
-if [ "$WEB_MODE" = "true" ]; then
-    echo "启动WebDAV监控Web界面模式..."
+# 强制使用Web界面模式，忽略配置
+echo "强制启动WebDAV监控Web界面模式..."
+
+# 确保配置目录存在
+mkdir -p /config
+
+# 如果配置文件不存在，则创建默认配置
+if [ ! -f "/config/webdav_config.json" ]; then
+    echo '{"webdav_url": "", "username": "", "password": "", "local_dir": "/data", "remote_dir": "/", "check_interval": 600, "max_workers": 10, "replace_ip": "", "post_command": "", "web_port": 8080}' > /config/webdav_config.json
+    echo "已创建默认配置文件"
+fi
+
+# 如果环境变量中有WebDAV配置，则更新配置文件
+if [ -n "$WEBDAV_URL" ] && [ -n "$WEBDAV_USERNAME" ] && [ -n "$WEBDAV_PASSWORD" ]; then
+    echo "检测到环境变量配置，正在更新配置文件..."
     
-    # 确保配置目录存在
-    mkdir -p /config
+    # 读取当前配置
+    CONFIG_CONTENT=$(cat /config/webdav_config.json)
     
-    # 如果配置文件不存在，则创建默认配置
-    if [ ! -f "/config/webdav_config.json" ]; then
-        echo '{"webdav_url": "", "username": "", "password": "", "local_dir": "/data", "remote_dir": "/", "check_interval": 600, "max_workers": 10, "replace_ip": "", "post_command": "", "web_port": 8080}' > /config/webdav_config.json
-        echo "已创建默认配置文件"
-    fi
+    # 使用临时文件更新配置
+    TMP_FILE=$(mktemp)
+    echo "$CONFIG_CONTENT" | \
+        sed "s|\"webdav_url\": \".*\"|\"webdav_url\": \"$WEBDAV_URL\"|g" | \
+        sed "s|\"username\": \".*\"|\"username\": \"$WEBDAV_USERNAME\"|g" | \
+        sed "s|\"password\": \".*\"|\"password\": \"$WEBDAV_PASSWORD\"|g" | \
+        sed "s|\"remote_dir\": \".*\"|\"remote_dir\": \"$REMOTE_DIR\"|g" | \
+        sed "s|\"local_dir\": \".*\"|\"local_dir\": \"$LOCAL_DIR\"|g" | \
+        sed "s|\"check_interval\": [0-9]*|\"check_interval\": $CHECK_INTERVAL|g" | \
+        sed "s|\"max_workers\": [0-9]*|\"max_workers\": $THREADS|g" | \
+        sed "s|\"replace_ip\": \".*\"|\"replace_ip\": \"$REPLACE_IP\"|g" > $TMP_FILE
     
-    # 启动Web服务
-    echo "启动Web服务在端口: ${WEB_PORT}"
-    cd /app && python webdav_monitor_web.py --config-dir /config --port ${WEB_PORT}
-    exit 0
+    # 将更新后的配置写回文件
+    cat $TMP_FILE > /config/webdav_config.json
+    rm $TMP_FILE
 fi
 
-# 以下是原来的命令行模式
-
-# 设置默认值
-: ${WEBDAV_URL:?"请设置WEBDAV_URL环境变量"}
-: ${WEBDAV_USERNAME:?"请设置WEBDAV_USERNAME环境变量"}
-: ${WEBDAV_PASSWORD:?"请设置WEBDAV_PASSWORD环境变量"}
-: ${REMOTE_DIR:="/links/影视"}
-: ${LOCAL_DIR:="/data"}
-: ${CHECK_INTERVAL:="600"}
-: ${THREADS:="10"}
-: ${REPLACE_IP:=""}
-: ${POST_COMMAND:=""}
-: ${VERBOSE:="false"}
-
-# 构建命令行参数
-ARGS="--url \"$WEBDAV_URL\" --username \"$WEBDAV_USERNAME\" --password \"$WEBDAV_PASSWORD\""
-ARGS="$ARGS --remote-dir \"$REMOTE_DIR\" --local-dir \"$LOCAL_DIR\""
-ARGS="$ARGS --interval \"$CHECK_INTERVAL\" --threads \"$THREADS\""
-
-# 添加可选参数
-if [ -n "$REPLACE_IP" ]; then
-  ARGS="$ARGS --replace-ip \"$REPLACE_IP\""
-fi
-
-if [ -n "$POST_COMMAND" ]; then
-  ARGS="$ARGS --post-command \"$POST_COMMAND\""
-fi
-
-if [ "$VERBOSE" = "true" ]; then
-  ARGS="$ARGS --verbose"
-fi
-
-# 打印启动信息
-echo "启动WebDAV监控工具..."
-echo "WebDAV服务器: $WEBDAV_URL"
-echo "远程目录: $REMOTE_DIR"
-echo "本地目录: $LOCAL_DIR"
-echo "检查间隔: $CHECK_INTERVAL 秒"
-echo "下载线程数: $THREADS"
-echo "日志级别: $LOG_LEVEL"
-
-# 启动程序
-echo "执行命令: python webdav_monitor_mt.py $ARGS"
-eval "python webdav_monitor_mt.py $ARGS" 
+# 启动Web服务
+: ${WEB_PORT:="8080"}
+echo "启动Web服务在端口: ${WEB_PORT}"
+cd /app && python webdav_monitor_web.py --config-dir /config --port ${WEB_PORT} 
