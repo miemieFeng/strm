@@ -301,24 +301,39 @@ class WebdavMonitor:
         return file_path not in self.processed_files
     
     def _encode_path(self, path):
-        """编码路径，处理中文字符问题"""
+        """编码路径，处理特殊字符和中文字符问题"""
         try:
+            # 如果路径为空，直接返回
+            if not path:
+                return path
+                
             # 只编码路径部分，不编码基本URL结构
             parts = path.split('/')
             encoded_parts = []
             for part in parts:
                 if part:  # 跳过空部分
-                    # 只对非ASCII字符进行编码
-                    if any(ord(c) > 127 for c in part):
-                        encoded_parts.append(urllib.parse.quote(part))
-                    else:
-                        encoded_parts.append(part)
+                    # 先尝试解码，以防已经是URL编码
+                    try:
+                        decoded_part = urllib.parse.unquote(part)
+                        # 如果解码后包含非ASCII字符，则需要重新编码
+                        if any(ord(c) > 127 for c in decoded_part):
+                            encoded_parts.append(urllib.parse.quote(decoded_part, safe=''))
+                        else:
+                            # 如果全是ASCII字符，则只对特殊字符编码
+                            encoded_parts.append(urllib.parse.quote(part, safe='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~'))
+                    except:
+                        # 如果解码出错，直接对原始部分进行编码
+                        encoded_parts.append(urllib.parse.quote(part, safe='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~'))
             
             encoded_path = '/'.join(encoded_parts)
             if path.startswith('/'):
                 encoded_path = '/' + encoded_path
             if path.endswith('/'):
                 encoded_path = encoded_path + '/'
+                
+            # 记录转换过程
+            if encoded_path != path:
+                logging.debug(f"路径编码: {path} -> {encoded_path}")
                 
             return encoded_path
         except Exception as e:
@@ -476,10 +491,31 @@ class WebdavMonitor:
         if futures is None:
             futures = []
             
+        if depth > 20:  # 添加最大递归深度限制
+            logging.warning(f"已达到最大递归深度({depth})，跳过目录: {directory}")
+            return futures
+            
         try:
             try:
                 # 获取目录列表
-                files = self.client.list(directory)
+                try:
+                    files = self.client.list(directory)
+                except Exception as e:
+                    logging.error(f"列出目录 {directory} 时出错: {e}")
+                    if "Connection pool is full" in str(e):
+                        logging.warning("连接池已满，重建WebDAV客户端...")
+                        self.client = self._create_client_with_retry(max_retries=3)
+                        # 重试一次
+                        files = self.client.list(directory)
+                    else:
+                        # 尝试使用编码后的路径
+                        encoded_directory = self._encode_path(directory)
+                        if encoded_directory != directory:
+                            logging.debug(f"尝试使用编码后的路径: {encoded_directory}")
+                            files = self.client.list(encoded_directory)
+                        else:
+                            raise
+                
                 # 直接批量处理目录中的文件
                 new_files = []
                 
@@ -496,9 +532,23 @@ class WebdavMonitor:
                     try:
                         is_dir = self.client.is_dir(file_path)
                     except Exception as e:
-                        logging.warning(f"检查路径是否为目录时出错")
-                        # 尝试通过路径判断
-                        is_dir = file_path.endswith('/')
+                        logging.warning(f"检查路径是否为目录时出错: {file_path}, {str(e)}")
+                        # 改进判断方法，使用多种方式确定是否为目录
+                        is_dir = False
+                        # 1. 通过路径结尾判断
+                        if file_path.endswith('/'):
+                            is_dir = True
+                        else:
+                            # 2. 尝试列出该路径内容，如果可以列出则为目录
+                            try:
+                                self.client.list(file_path)
+                                is_dir = True
+                            except:
+                                # 3. 检查文件扩展名，如果有明显的文件扩展名则不是目录
+                                file_ext = os.path.splitext(file_path)[1].lower()
+                                is_dir = file_ext == ''
+                        
+                        logging.debug(f"路径 {file_path} 判断结果: {'目录' if is_dir else '文件'}")
                     
                     if is_dir:
                         # 收集目录待后续处理
@@ -519,21 +569,10 @@ class WebdavMonitor:
                     try:
                         self._find_files(dir_path, executor, futures, depth + 1)
                     except Exception as e:
-                        logging.warning(f"递归查找目录时出错")
+                        logging.warning(f"递归查找目录时出错: {dir_path}, {str(e)}")
                 
             except Exception as e:
-                logging.error(f"列出目录 {directory} 时出错: {e}")
-                # 尝试使用编码后的路径
-                encoded_directory = self._encode_path(directory)
-                if encoded_directory != directory:
-                    logging.debug(f"尝试使用编码后的路径: {encoded_directory}")
-                    try:
-                        files = self.client.list(encoded_directory)
-                    except Exception as e2:
-                        logging.error(f"使用编码路径 {encoded_directory} 列出目录时出错: {e2}")
-                        return futures
-                else:
-                    return futures
+                logging.error(f"处理目录 {directory} 时出错: {e}")
             
             return futures
         except Exception as e:
