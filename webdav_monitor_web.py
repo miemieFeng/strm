@@ -71,28 +71,110 @@ def load_config():
     global config, config_file
     try:
         if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
-                saved_config = json.load(f)
-                # 更新配置，保留默认值
-                for key in saved_config:
-                    if key in config:
-                        config[key] = saved_config[key]
-            logging.info("配置已从文件加载")
+            try:
+                with open(config_file, 'r') as f:
+                    content = f.read().strip()
+                    if not content:
+                        logging.warning("配置文件存在但为空，将使用默认配置")
+                        save_config()
+                        return
+                    
+                    # 尝试修复常见的JSON格式问题
+                    try:
+                        saved_config = json.loads(content)
+                    except json.JSONDecodeError as je:
+                        logging.error(f"配置文件JSON格式错误: {je}")
+                        
+                        # 尝试修复常见错误 - 如果JSON缺少逗号
+                        if "Expecting ',' delimiter" in str(je):
+                            try:
+                                # 在指定位置插入逗号并重试
+                                pos = je.pos
+                                fixed_content = content[:pos] + "," + content[pos:]
+                                saved_config = json.loads(fixed_content)
+                                logging.warning("已自动修复JSON格式错误")
+                                
+                                # 保存修复后的配置
+                                with open(config_file, 'w') as f:
+                                    f.write(fixed_content)
+                            except:
+                                logging.error("无法自动修复JSON格式错误，将使用默认配置")
+                                save_config()
+                                return
+                        else:
+                            # 其他错误无法修复，使用默认配置
+                            logging.error("无法解析配置文件，将使用默认配置")
+                            save_config()
+                            return
+                    
+                    # 更新配置，保留默认值
+                    for key in saved_config:
+                        if key in config:
+                            config[key] = saved_config[key]
+                logging.info("配置已从文件加载")
+            except Exception as e:
+                logging.error(f"加载配置文件时出错: {e}")
+                logging.warning("将使用默认配置")
+                save_config()
         else:
             save_config()
             logging.info("已创建默认配置文件")
     except Exception as e:
-        logging.error(f"加载配置文件时出错: {e}")
+        logging.error(f"配置处理过程中出错: {e}")
+        # 确保有可用的默认配置
+        try:
+            save_config()
+        except:
+            logging.error("无法保存默认配置，将使用内存中的默认值继续运行")
 
 def save_config():
     """保存配置到文件"""
     try:
-        # 不保存密码到配置文件，如果是更新配置则保留原密码
+        # 创建要保存的配置副本
         save_data = config.copy()
         
-        with open(config_file, 'w') as f:
+        # 验证配置数据合法性
+        for key in ["check_interval", "max_workers", "web_port"]:
+            if key in save_data and not isinstance(save_data[key], int):
+                try:
+                    save_data[key] = int(save_data[key])
+                except (ValueError, TypeError):
+                    # 如果无法转换为整数，使用默认值
+                    if key == "check_interval":
+                        save_data[key] = 600
+                    elif key == "max_workers":
+                        save_data[key] = 10
+                    elif key == "web_port":
+                        save_data[key] = 8080
+        
+        # 确保配置目录存在
+        config_dir = os.path.dirname(config_file)
+        if config_dir and not os.path.exists(config_dir):
+            try:
+                os.makedirs(config_dir)
+            except Exception as e:
+                logging.error(f"创建配置目录失败: {e}")
+        
+        # 先写入临时文件，确认无误后再替换
+        tmp_file = f"{config_file}.tmp"
+        with open(tmp_file, 'w') as f:
             json.dump(save_data, f, indent=2)
-        logging.info("配置已保存到文件")
+        
+        # 验证生成的JSON是否有效
+        try:
+            with open(tmp_file, 'r') as f:
+                json.load(f)  # 尝试读取以验证
+            # 验证通过，替换原文件
+            os.rename(tmp_file, config_file)
+            logging.info("配置已保存到文件")
+        except Exception as e:
+            logging.error(f"生成的配置文件无效: {e}")
+            # 删除临时文件
+            try:
+                os.remove(tmp_file)
+            except:
+                pass
+            raise
     except Exception as e:
         logging.error(f"保存配置文件时出错: {e}")
 
