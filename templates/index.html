@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebDAV监控器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f5f5f5;
+        }
+        .card {
+            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .log-entry {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .log-INFO {
+            background-color: #e8f4f8;
+        }
+        .log-WARNING {
+            background-color: #fff3cd;
+        }
+        .log-ERROR {
+            background-color: #f8d7da;
+        }
+        .status-running {
+            color: #198754;
+            font-weight: bold;
+        }
+        .status-stopped {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .btn-group {
+            margin-bottom: 20px;
+        }
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        .stats-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .form-password {
+            position: relative;
+        }
+        .toggle-password {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="d-flex flex-wrap justify-content-center py-3 mb-4 border-bottom">
+            <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
+                <span class="navbar-brand">WebDAV监控器</span>
+            </a>
+            <ul class="nav nav-pills">
+                <li class="nav-item"><span class="nav-link {{ 'active' if stats.status == '运行中' else '' }}">状态: 
+                    <span class="{{ 'status-running' if stats.status == '运行中' else 'status-stopped' }}">{{ stats.status }}</span>
+                </span></li>
+            </ul>
+        </header>
+
+        <!-- 控制按钮 -->
+        <div class="row">
+            <div class="col-md-12">
+                <div class="btn-group" role="group">
+                    <button id="btnStart" class="btn btn-success" {{ 'disabled' if stats.status == '运行中' else '' }}>启动监控</button>
+                    <button id="btnStop" class="btn btn-danger" {{ 'disabled' if stats.status != '运行中' else '' }}>停止监控</button>
+                    <button id="btnRestart" class="btn btn-warning">重启监控</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：状态和日志 -->
+            <div class="col-md-7">
+                <!-- 状态卡片 -->
+                <div class="card">
+                    <div class="card-header">
+                        运行状态
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <p>状态: <span class="{{ 'status-running' if stats.status == '运行中' else 'status-stopped' }}">{{ stats.status }}</span></p>
+                                <p>监控间隔: <span class="stats-value">{{ stats.interval }}秒</span></p>
+                            </div>
+                            <div class="col-md-8">
+                                <p>本地目录: <span class="text-muted">{{ stats.local_dir }}</span></p>
+                                <p>远程目录: <span class="text-muted">{{ stats.remote_dir }}</span></p>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <div class="row">
+                            <div class="col-md-4">
+                                <p>下载文件数: <span class="stats-value">{{ stats.download_count|default(0) }}</span></p>
+                            </div>
+                            <div class="col-md-4">
+                                <p>处理STRM: <span class="stats-value">{{ stats.processed_count|default(0) }}</span></p>
+                            </div>
+                            <div class="col-md-4">
+                                <p>失败数: <span class="stats-value text-danger">{{ stats.error_count|default(0) }}</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 最近下载文件卡片 -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        最近下载文件
+                        <span id="refreshStatus" class="badge bg-secondary">自动刷新</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="recentFiles" class="list-group">
+                            <div class="text-center text-muted">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 日志卡片 -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        监控日志
+                        <button id="refreshLogs" class="btn btn-sm btn-outline-secondary">刷新</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="logEntries" style="max-height: 300px; overflow-y: auto;">
+                            {% if logs %}
+                                {% for log in logs %}
+                                    <div class="log-entry log-{{ log.level }}">
+                                        <small class="text-muted">{{ log.time }}</small> 
+                                        <span class="badge bg-{{ 'info' if log.level == 'INFO' else ('warning' if log.level == 'WARNING' else 'danger') }}">{{ log.level }}</span>
+                                        {{ log.message }}
+                                    </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="text-center text-muted p-3">无日志记录</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：配置 -->
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header">
+                        WebDAV配置
+                    </div>
+                    <div class="card-body">
+                        <form id="configForm">
+                            <div class="mb-3">
+                                <label for="webdav_url" class="form-label">WebDAV地址</label>
+                                <input type="text" class="form-control" id="webdav_url" name="webdav_url" value="{{ config.webdav_url }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="username" class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="username" name="username" value="{{ config.username }}" required>
+                            </div>
+                            <div class="mb-3 form-password">
+                                <label for="password" class="form-label">密码</label>
+                                <input type="password" class="form-control" id="password" name="password" value="{{ config.password }}" required>
+                                <span class="toggle-password" onclick="togglePassword('password')">👁️</span>
+                            </div>
+                            <div class="mb-3">
+                                <label for="local_dir" class="form-label">本地目录</label>
+                                <input type="text" class="form-control" id="local_dir" name="local_dir" value="{{ config.local_dir }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="remote_dir" class="form-label">远程目录</label>
+                                <input type="text" class="form-control" id="remote_dir" name="remote_dir" value="{{ config.remote_dir }}" required>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="check_interval" class="form-label">检查间隔(秒)</label>
+                                        <input type="number" class="form-control" id="check_interval" name="check_interval" value="{{ config.check_interval }}" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="max_workers" class="form-label">下载线程数</label>
+                                        <input type="number" class="form-control" id="max_workers" name="max_workers" value="{{ config.max_workers }}" required>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="replace_ip" class="form-label">替换STRM中的IP为域名</label>
+                                <input type="text" class="form-control" id="replace_ip" name="replace_ip" value="{{ config.replace_ip }}" placeholder="例如: example.com">
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="post_command" class="form-label">下载后执行命令</label>
+                                <input type="text" class="form-control" id="post_command" name="post_command" value="{{ config.post_command }}" placeholder="可使用{local_path}占位符">
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="web_port" class="form-label">Web端口</label>
+                                <input type="number" class="form-control" id="web_port" name="web_port" value="{{ config.web_port }}" required>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">保存配置</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="py-3 my-4 border-top">
+            <p class="text-center text-muted">WebDAV监控器 &copy; 2023</p>
+        </footer>
+    </div>
+
+    <!-- 模态框 -->
+    <div class="modal fade" id="messageModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">提示</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-primary" id="modalAction" style="display: none;">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 显示消息模态框
+        function showMessage(title, message, actionText = null, actionCallback = null) {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').textContent = message;
+            
+            const actionButton = document.getElementById('modalAction');
+            if (actionText && actionCallback) {
+                actionButton.textContent = actionText;
+                actionButton.style.display = 'block';
+                actionButton.onclick = actionCallback;
+            } else {
+                actionButton.style.display = 'none';
+            }
+            
+            const modal = new bootstrap.Modal(document.getElementById('messageModal'));
+            modal.show();
+        }
+
+        // 切换密码可见性
+        function togglePassword(fieldId) {
+            const field = document.getElementById(fieldId);
+            if (field.type === 'password') {
+                field.type = 'text';
+            } else {
+                field.type = 'password';
+            }
+        }
+
+        // 加载最近文件
+        function loadRecentFiles() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const recentFilesDiv = document.getElementById('recentFiles');
+                    if (data.recent_files && data.recent_files.length > 0) {
+                        recentFilesDiv.innerHTML = '';
+                        data.recent_files.forEach(file => {
+                            const fileItem = document.createElement('div');
+                            fileItem.className = 'list-group-item list-group-item-action small';
+                            fileItem.textContent = file;
+                            recentFilesDiv.appendChild(fileItem);
+                        });
+                    } else {
+                        recentFilesDiv.innerHTML = '<div class="text-center text-muted">暂无下载文件</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('加载最近文件失败:', error);
+                    document.getElementById('recentFiles').innerHTML = 
+                        '<div class="text-center text-danger">加载失败</div>';
+                });
+        }
+
+        // 刷新日志
+        function refreshLogs() {
+            fetch('/api/logs')
+                .then(response => response.json())
+                .then(logs => {
+                    const logEntriesDiv = document.getElementById('logEntries');
+                    if (logs.length > 0) {
+                        logEntriesDiv.innerHTML = '';
+                        logs.forEach(log => {
+                            const logEntry = document.createElement('div');
+                            logEntry.className = `log-entry log-${log.level}`;
+                            
+                            const timeSpan = document.createElement('small');
+                            timeSpan.className = 'text-muted';
+                            timeSpan.textContent = log.time + ' ';
+                            
+                            const levelBadge = document.createElement('span');
+                            levelBadge.className = `badge bg-${log.level === 'INFO' ? 'info' : (log.level === 'WARNING' ? 'warning' : 'danger')}`;
+                            levelBadge.textContent = log.level + ' ';
+                            
+                            logEntry.appendChild(timeSpan);
+                            logEntry.appendChild(levelBadge);
+                            logEntry.appendChild(document.createTextNode(' ' + log.message));
+                            
+                            logEntriesDiv.appendChild(logEntry);
+                        });
+                    } else {
+                        logEntriesDiv.innerHTML = '<div class="text-center text-muted p-3">无日志记录</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('刷新日志失败:', error);
+                });
+        }
+
+        // 事件监听
+        document.addEventListener('DOMContentLoaded', () => {
+            // 启动按钮
+            document.getElementById('btnStart').addEventListener('click', function() {
+                fetch('/api/start', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showMessage('成功', '监控已启动');
+                            setTimeout(() => { location.reload(); }, 1000);
+                        } else {
+                            showMessage('错误', '启动监控失败');
+                        }
+                    })
+                    .catch(error => {
+                        showMessage('错误', '启动监控请求失败');
+                    });
+            });
+
+            // 停止按钮
+            document.getElementById('btnStop').addEventListener('click', function() {
+                fetch('/api/stop', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showMessage('成功', '监控已停止');
+                            setTimeout(() => { location.reload(); }, 1000);
+                        } else {
+                            showMessage('错误', '停止监控失败');
+                        }
+                    })
+                    .catch(error => {
+                        showMessage('错误', '停止监控请求失败');
+                    });
+            });
+
+            // 重启按钮
+            document.getElementById('btnRestart').addEventListener('click', function() {
+                fetch('/api/restart', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showMessage('成功', '监控已重启');
+                            setTimeout(() => { location.reload(); }, 1000);
+                        } else {
+                            showMessage('错误', '重启监控失败');
+                        }
+                    })
+                    .catch(error => {
+                        showMessage('错误', '重启监控请求失败');
+                    });
+            });
+
+            // 配置表单提交
+            document.getElementById('configForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+                
+                const formData = new FormData(this);
+                
+                fetch('/api/save_config', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.needs_restart) {
+                            showMessage('配置已保存', '配置已更新，但需要重启监控才能生效', '重启监控', () => {
+                                fetch('/api/restart', { method: 'POST' })
+                                    .then(() => { 
+                                        setTimeout(() => { location.reload(); }, 1000);
+                                    });
+                            });
+                        } else {
+                            showMessage('成功', '配置已保存');
+                        }
+                    } else {
+                        showMessage('错误', '保存配置失败');
+                    }
+                })
+                .catch(error => {
+                    showMessage('错误', '保存配置请求失败');
+                });
+            });
+
+            // 刷新日志按钮
+            document.getElementById('refreshLogs').addEventListener('click', refreshLogs);
+
+            // 初始加载最近文件和定时刷新
+            loadRecentFiles();
+            setInterval(() => {
+                if (document.getElementById('refreshStatus').textContent === '自动刷新') {
+                    loadRecentFiles();
+                }
+            }, 5000);
+
+            // 自动刷新开关
+            document.getElementById('refreshStatus').addEventListener('click', function() {
+                if (this.textContent === '自动刷新') {
+                    this.textContent = '已暂停';
+                    this.classList.remove('bg-secondary');
+                    this.classList.add('bg-warning');
+                } else {
+                    this.textContent = '自动刷新';
+                    this.classList.remove('bg-warning');
+                    this.classList.add('bg-secondary');
+                    loadRecentFiles(); // 立即刷新一次
+                }
+            });
+        });
+    </script>
+</body>
+</html> 

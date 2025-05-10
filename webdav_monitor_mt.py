@@ -356,7 +356,6 @@ class WebdavMonitor:
                                 logging.error(f"使用编码路径下载文件时出错: {e2}")
             
             if success:
-                # 不记录单个文件的下载信息
                 # 添加到已处理文件列表
                 self._save_processed_file(remote_path)
                 
@@ -368,6 +367,8 @@ class WebdavMonitor:
                 # 更新下载统计
                 with self.stats_lock:
                     self.download_count += 1
+                    # 记录下载的文件
+                    self.downloaded_files.append(remote_path)
                     
                     # 更新目录统计
                     if remote_dir not in self.dir_stats:
@@ -444,6 +445,8 @@ class WebdavMonitor:
         self.error_count = 0
         self.processed_count = 0
         self.dir_stats = {}  # 重置目录统计
+        # 记录新增的文件列表
+        self.downloaded_files = []
         
         # 创建线程池
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -453,29 +456,7 @@ class WebdavMonitor:
             # 等待所有下载任务完成
             executor.shutdown(wait=True)
         
-        # 显示按目录分类的下载统计
-        if self.dir_stats:
-            # 按下载数量排序
-            sorted_dirs = sorted(self.dir_stats.items(), key=lambda x: x[1]['downloads'], reverse=True)
-            
-            # 只显示前10个目录的详细信息
-            top_dirs = sorted_dirs[:10]
-            remaining_dirs = sorted_dirs[10:]
-            
-            if len(sorted_dirs) > 1:  # 只有当多于一个目录时才显示目录统计
-                logging.info("按目录统计下载文件:")
-                for remote_dir, stats in top_dirs:
-                    # 获取目录的最后一级名称，更简洁
-                    dir_name = os.path.basename(remote_dir) or remote_dir
-                    logging.info(f"  - {dir_name}: 新增 {stats['downloads']} 个文件, 处理STRM {stats['processed']} 个")
-                
-                # 如果有更多目录，合并显示
-                if remaining_dirs:
-                    remaining_downloads = sum(stats['downloads'] for _, stats in remaining_dirs)
-                    remaining_processed = sum(stats['processed'] for _, stats in remaining_dirs)
-                    logging.info(f"  - 其他 {len(remaining_dirs)} 个目录: 新增 {remaining_downloads} 个文件, 处理STRM {remaining_processed} 个")
-            
-        return self.download_count, self.error_count, self.processed_count
+        return self.download_count, self.error_count, self.processed_count, self.downloaded_files
     
     def _find_files(self, directory, executor, futures=None, depth=0):
         """递归查找文件并提交到线程池下载"""
@@ -488,11 +469,6 @@ class WebdavMonitor:
                 files = self.client.list(directory)
                 # 直接批量处理目录中的文件
                 new_files = []
-                
-                # 创建缩进，显示目录层级
-                indent = "  " * depth
-                # 在非debug模式下也显示当前处理的文件夹
-                logging.info(f"{indent}▶ 开始扫描: {directory}")
                 
                 # 收集所有文件和目录
                 directories = []
@@ -521,12 +497,9 @@ class WebdavMonitor:
                 
                 # 批量提交文件下载任务
                 if new_files:
-                    logging.info(f"{indent}  ✓ 发现: {len(new_files)} 个新文件")
                     for file_path in new_files:
                         future = executor.submit(self._download_worker, file_path)
                         futures.append(future)
-                else:
-                    logging.info(f"{indent}  ✓ 目录为空或无新文件")
                 
                 # 处理完所有文件后再递归处理子目录，减少并行递归深度
                 for dir_path in directories:
@@ -534,9 +507,6 @@ class WebdavMonitor:
                         self._find_files(dir_path, executor, futures, depth + 1)
                     except Exception as e:
                         logging.warning(f"递归查找目录时出错")
-
-                # 在目录处理完成后添加日志
-                logging.info(f"{indent}◀ 完成扫描: {directory}")
                 
             except Exception as e:
                 logging.error(f"列出目录 {directory} 时出错: {e}")
@@ -601,7 +571,6 @@ class WebdavMonitor:
         """开始监控WebDAV服务器"""
         logging.info(f"开始监控WebDAV服务器的 {self.remote_dir} 目录，将检查新的文件 (间隔: {self.check_interval}秒)")
         logging.info(f"使用 {self.max_workers} 个线程进行并行下载")
-        logging.info(f"连接池配置：初始连接数 {self.pool_connections}，最大连接数 {self.pool_maxsize}")
         
         if self.replace_ip:
             logging.info(f"下载后将自动处理STRM文件内容，替换IP为: {self.replace_ip}")
@@ -621,7 +590,7 @@ class WebdavMonitor:
                 
                 # 定期重建客户端以释放连接资源
                 if scan_count % client_rebuild_interval == 0:
-                    logging.info("定期重建WebDAV客户端以释放连接资源...")
+                    logging.debug("定期重建WebDAV客户端以释放连接资源...")
                     self.client = self._create_client_with_retry(max_retries=3)
                 
                 # 检查远程目录是否存在
@@ -641,14 +610,21 @@ class WebdavMonitor:
                     continue
                 
                 # 查找所有文件并立即下载
-                download_count, error_count, processed_count = self._find_and_download_files()
+                download_count, error_count, processed_count, downloaded_files = self._find_and_download_files()
                 
                 # 更新上次扫描时间
                 self._save_last_scan_time()
                 
                 elapsed_time = time.time() - start_time
-                # 只记录总计新增了多少文件，不列出详细过程
-                logging.info(f"扫描完成 - 耗时: {elapsed_time:.2f}秒，新增文件: {download_count}个，处理STRM内容: {processed_count}个，失败: {error_count}个")
+                
+                # 记录扫描结果
+                logging.info(f"扫描完成 - 耗时: {elapsed_time:.2f}秒，新增文件: {download_count}个，失败: {error_count}个")
+                
+                # 如果有新增文件，输出文件列表
+                if download_count > 0:
+                    logging.info(f"新增文件列表:")
+                    for file_path in downloaded_files:
+                        logging.info(f"  - {file_path}")
                 
                 logging.info(f"等待 {self.check_interval} 秒后再次检查...")
                 time.sleep(self.check_interval)
