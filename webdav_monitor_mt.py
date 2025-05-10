@@ -32,15 +32,28 @@ if 'HTTPS_PROXY' in os.environ:
 # 配置IPv6支持
 socket.setdefaulttimeout(30)  # 设置较长的超时时间
 
+# 从环境变量获取日志级别
+log_level_name = os.environ.get('LOG_LEVEL', 'INFO')
+log_level = getattr(logging, log_level_name.upper(), logging.INFO)
+
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("webdav_monitor.log"),
         logging.StreamHandler()
     ]
 )
+
+# 创建结果报告器 - 用于确保扫描耗时和新增文件数量始终显示，即使日志级别设置为WARNING
+class ResultReporter:
+    @staticmethod
+    def report(message):
+        # 使用ERROR级别确保消息始终显示，但实际是INFO信息
+        logging.log(logging.ERROR if log_level > logging.INFO else logging.INFO, message)
+
+reporter = ResultReporter()
 
 # 打印系统和网络信息
 logging.info("=== 系统和网络信息 ===")
@@ -617,11 +630,11 @@ class WebdavMonitor:
                 
                 elapsed_time = time.time() - start_time
                 
-                # 记录扫描结果
-                logging.info(f"扫描完成 - 耗时: {elapsed_time:.2f}秒，新增文件: {download_count}个，失败: {error_count}个")
+                # 记录扫描结果 - 使用专用报告器确保即使在警告级别下也会显示
+                reporter.report(f"扫描完成 - 耗时: {elapsed_time:.2f}秒，新增文件: {download_count}个，失败: {error_count}个")
                 
-                # 如果有新增文件，输出文件列表
-                if download_count > 0:
+                # 如果有新增文件，输出文件列表，但保持在INFO级别
+                if download_count > 0 and logging.getLogger().level <= logging.INFO:
                     logging.info(f"新增文件列表:")
                     for file_path in downloaded_files:
                         logging.info(f"  - {file_path}")

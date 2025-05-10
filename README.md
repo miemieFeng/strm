@@ -53,6 +53,76 @@ docker run -d \
 
 访问 `http://your-server-ip:8080` 进入Web管理界面
 
+### 绿联NAS专用部署方式
+
+绿联NAS上推荐使用主机网络模式（host network mode）部署，以避免可能的端口映射问题。项目中提供了专用的配置文件 `ugreen-nas-docker-compose.yml`：
+
+1. 在绿联NAS上启用SSH，并登录到NAS
+2. 创建一个目录用于存放项目文件
+```bash
+mkdir -p /volume1/docker/webdav-monitor
+cd /volume1/docker/webdav-monitor
+```
+3. 上传或创建`ugreen-nas-docker-compose.yml`文件，内容如下：
+
+```yaml
+version: '3'
+
+services:
+  # Web界面模式
+  webdav-monitor-web:
+    image: miemiefeng/webdav-monitor:latest
+    container_name: webdav-monitor-web
+    restart: unless-stopped
+    # 使用host网络模式，避免端口映射问题
+    network_mode: "host"
+    environment:
+      # Web界面模式启用 - 必须使用小写true
+      - WEB_MODE=true
+      - WEB_PORT=8080
+      # 替换为你的WebDAV配置
+      - WEBDAV_URL=your_webdav_url
+      - WEBDAV_USERNAME=your_username
+      - WEBDAV_PASSWORD=your_password
+      - REMOTE_DIR=/your/remote/dir
+      - LOCAL_DIR=/data
+      - CHECK_INTERVAL=600
+      - THREADS=10
+      - REPLACE_IP=your_domain.com
+      # 日志设置 - 减少详细日志量
+      - LOG_LEVEL=WARNING
+      - VERBOSE=false
+    volumes:
+      # 替换为绿联NAS上实际的媒体目录路径
+      - /volume1/your_media_folder:/data
+      # 配置文件存储位置
+      - /volume1/docker/webdav-monitor/config:/config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+4. 启动容器
+```bash
+docker-compose -f ugreen-nas-docker-compose.yml up -d
+```
+
+5. 访问Web界面
+   - 打开浏览器，输入 `http://绿联NAS的IP:8080`
+   - 如果无法访问，请检查绿联NAS的防火墙设置
+
+6. 故障排查
+   - 如果8080端口无法访问，可以修改`WEB_PORT`为其他端口
+   - 使用`docker logs webdav-monitor-web`查看容器日志以排查问题
+   - **注意**: 确保`WEB_MODE`设置为小写的`true`，不要使用大写的`TRUE`，因为脚本区分大小写
+
+7. 日志级别设置
+   - 默认日志级别为`INFO`，会显示详细的操作信息
+   - 设置`LOG_LEVEL=WARNING`可以减少日志量，只显示警告、错误和关键信息(扫描耗时和新增文件数)
+   - 可选值: `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`(日志量依次减少)
+
 ### 环境变量
 
 #### 命令行模式变量

@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+# 处理日志级别设置
+: ${LOG_LEVEL:="INFO"}
+export LOG_LEVEL
+
 # 检查是否使用Web界面模式
 if [ "$WEB_MODE" = "true" ]; then
     echo "启动WebDAV监控Web界面模式..."
@@ -59,6 +63,7 @@ echo "远程目录: $REMOTE_DIR"
 echo "本地目录: $LOCAL_DIR"
 echo "检查间隔: $CHECK_INTERVAL 秒"
 echo "下载线程数: $THREADS"
+echo "日志级别: $LOG_LEVEL"
 
 # 启动程序
 echo "执行命令: python webdav_monitor_mt.py $ARGS"

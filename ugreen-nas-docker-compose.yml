@@ -1,0 +1,43 @@
+version: '3'
+
+services:
+  # Web界面模式
+  webdav-monitor-web:
+    image: miemiefeng/webdav-monitor:latest
+    container_name: webdav-monitor-web
+    restart: unless-stopped
+    # 使用host网络模式，避免端口映射问题
+    network_mode: "host"
+    environment:
+      # Web界面模式启用 - 必须使用小写true
+      - WEB_MODE=true
+      - WEB_PORT=8080
+      # WebDAV配置
+      - WEBDAV_URL=http://hu.miemiejun.me:5005
+      - WEBDAV_USERNAME=19965027242
+      - WEBDAV_PASSWORD=zhao131496
+      - REMOTE_DIR=/links/影视
+      - LOCAL_DIR=/data
+      - CHECK_INTERVAL=600
+      - THREADS=10
+      - REPLACE_IP=hu.miemiejun.me
+      - VERBOSE=false
+      # 日志设置 - 减少详细日志量，只记录WARNING及以上级别
+      - LOG_LEVEL=WARNING
+      # 代理设置（默认不使用代理）
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - no_proxy=localhost,127.0.0.1
+      - NO_PROXY=localhost,127.0.0.1
+    volumes:
+      # 映射实际存在的目录
+      - /volume1/media/影视:/data
+      # 配置文件存储位置
+      - /volume1/docker/hu:/config
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3" 
